@@ -1,9 +1,22 @@
 const WebSocket = require("ws");
 const fs = require("fs");
 const { createServer } = require('node:http');
-const app = createServer();
+
+const app = createServer((req, res) => {
+  res.writeHead(200, { 'Content-Type': 'text/plain' });
+  res.end('EaglerProxy is running!\n');
+});
+
 let servers = {};
-const wss = new WebSocket.Server({ server: app.listen(25565) });
+
+// Use Render's PORT environment variable, falling back to 25565 for local testing
+const PORT = process.env.PORT || 25565;
+
+app.listen(PORT, '0.0.0.0', () => {
+    console.log(`Server is listening on port ${PORT}`);
+});
+
+const wss = new WebSocket.Server({ server: app });
 
 wss.on("connection", (ws, req) => {
 	ws.on("message", (message) => {
@@ -31,7 +44,12 @@ wss.on("connection", (ws, req) => {
         }
 	});
 });
+
 setInterval(() => {
-    servers = JSON.parse(fs.readFileSync("servers.json"));
-//}, 300000)
+    try {
+        servers = JSON.parse(fs.readFileSync("servers.json", "utf8"));
+    } catch (e) {
+        // If servers.json doesn't exist yet, keep it an empty object
+        servers = {};
+    }
 }, 2000);
