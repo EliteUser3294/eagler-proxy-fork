@@ -2,6 +2,7 @@ const WebSocket = require("ws");
 const fs = require("fs");
 const { createServer } = require("node:http");
 
+// Create HTTP server for Render health checks
 const app = createServer((req, res) => {
   res.writeHead(200, { "Content-Type": "text/plain" });
   res.end("EaglerProxy is running!\n");
@@ -9,17 +10,48 @@ const app = createServer((req, res) => {
 
 let servers = {};
 
+// Initial load of servers.json
+function loadServers() {
+  try {
+    if (fs.existsSync("servers.json")) {
+      servers = JSON.parse(fs.readFileSync("servers.json", "utf8"));
+      console.log("[Config] Loaded servers.json successfully");
+    }
+  } catch (err) {
+    console.error("[Error] Failed to read servers.json:", err.message);
+  }
+}
+
+loadServers();
+
+// Watch for changes in servers.json instead of polling every 2 seconds
+if (fs.existsSync("servers.json")) {
+  fs.watch("servers.json", (eventType) => {
+    if (eventType === "change") {
+      loadServers();
+    }
+  });
+}
+
 const PORT = process.env.PORT || 25565;
 
 app.listen(PORT, "0.0.0.0", () => {
   console.log(`[Proxy] Server listening on port ${PORT}`);
 });
 
-const wss = new WebSocket.Server({ server: app });
+// Optimization: perMessageDeflate: false disables compression overhead for low latency
+const wss = new WebSocket.Server({ 
+  server: app,
+  perMessageDeflate: false 
+});
 
 wss.on("connection", (ws, req) => {
   const path = req.url;
-  console.log(`[Client Connected] Path: "${path}"`);
+
+  // Optimization: Disable Nagle's algorithm to send packets instantly
+  if (req.socket) {
+    req.socket.setNoDelay(true);
+  }
 
   if (!servers[path]) {
     console.log(`[Disconnect] Path not mapped in servers.json: ${path}`);
@@ -28,17 +60,16 @@ wss.on("connection", (ws, req) => {
   }
 
   const targetUrl = servers[path];
-  console.log(`[Routing] Connecting ${path} -> ${targetUrl}`);
 
-  // Forward origin and user-agent headers to pass target server handshake checks
+  // Connect to target WebSocket with low latency options
   const targetWs = new WebSocket(targetUrl, {
+    perMessageDeflate: false,
     headers: {
       "User-Agent": req.headers["user-agent"] || "",
       "Origin": req.headers["origin"] || ""
     }
   });
 
-  // Queue initial messages from client if target is still opening
   const messageQueue = [];
 
   ws.on("message", (data) => {
@@ -50,7 +81,11 @@ wss.on("connection", (ws, req) => {
   });
 
   targetWs.on("open", () => {
-    console.log(`[Target Connected] Forwarding queued packets for ${path}`);
+    // Enable TCP No Delay on target connection if socket exists
+    if (targetWs._socket) {
+      targetWs._socket.setNoDelay(true);
+    }
+
     while (messageQueue.length > 0) {
       targetWs.send(messageQueue.shift());
     }
@@ -67,22 +102,10 @@ wss.on("connection", (ws, req) => {
   });
 
   targetWs.on("close", () => {
-    console.log(`[Target Closed] Connection to ${targetUrl} ended`);
     ws.close();
   });
 
   ws.on("close", () => {
-    console.log(`[Client Disconnected] Path: ${path}`);
     targetWs.close();
   });
 });
-
-setInterval(() => {
-  try {
-    if (fs.existsSync("servers.json")) {
-      servers = JSON.parse(fs.readFileSync("servers.json", "utf8"));
-    }
-  } catch (err) {
-    console.error("[Error] Failed to read servers.json:", err.message);
-  }
-}, 2000);
