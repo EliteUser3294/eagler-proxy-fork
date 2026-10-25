@@ -1,5 +1,4 @@
 {
-    "/webmc": "wss://play.webmc.fun",
+    "/webmc": "wss://ob.webmc.fun",
     "/arch": "wss://arch.mc",
-    "/zentic": "wss://zentic.cc"
 }
