@@ -1,7 +1,7 @@
 const WebSocket = require("ws");
 const { createServer } = require("node:http");
 
-// Create HTTP server for platform health checks
+// HTTP server for Render platform health checks
 const app = createServer((req, res) => {
   res.writeHead(200, { "Content-Type": "text/plain" });
   res.end("EaglerProxy is running!\n");
@@ -25,7 +25,7 @@ const wss = new WebSocket.Server({
 wss.on("connection", (ws, req) => {
   const path = req.url;
 
-  // Optimization: Disable Nagle's algorithm to send TCP packets instantly
+  // Optimization: Disable Nagle's algorithm to send packets instantly
   if (req.socket) {
     req.socket.setNoDelay(true);
   }
@@ -35,11 +35,11 @@ wss.on("connection", (ws, req) => {
     return;
   }
 
-  // Extract client's subprotocols (e.g., 'eaglercraft') so the backend accepts the handshake
+  // Extract client subprotocols (e.g., 'eaglercraft') so backend accepts the handshake
   const clientProtocols = req.headers["sec-websocket-protocol"];
   const targetUrl = new URL(servers[path]);
 
-  // Connect immediately to the target server to proxy MOTD and game traffic transparently
+  // Connect instantly to the target server
   const targetWs = new WebSocket(
     servers[path], 
     clientProtocols ? clientProtocols.split(',').map(s => s.trim()) : undefined, 
@@ -72,16 +72,13 @@ wss.on("connection", (ws, req) => {
     }
   });
 
-  // Pipe responses (including server list MOTD pings) directly back to the client
   targetWs.on("message", (data) => {
     if (ws.readyState === WebSocket.OPEN) {
       ws.send(data);
     }
   });
 
-  targetWs.on("error", (err) => {
-    console.error(`Target WS Error for ${path}:`, err.message);
-  });
+  targetWs.on("error", () => {});
 
   targetWs.on("close", () => {
     ws.close();
