@@ -7,16 +7,27 @@ const app = createServer((req, res) => {
   res.end("EaglerProxy is running!\n");
 });
 
-// Define your servers directly here to avoid JSON parsing/trailing comma issues
+// Map routes to target public servers
 const servers = {
   "/webmc": "wss://play.webmc.fun",
   "/arch": "wss://arch.mc"
 };
 
+// Customizable MOTD settings
+const MOTD_SETTINGS = {
+  "/webmc": {
+    line1: "§b§lWebMC Proxy",
+    line2: "§7Connected via EaglerProxy on Render"
+  },
+  "/arch": {
+    line1: "§a§lArchMC Proxy",
+    line2: "§7Connected via EaglerProxy on Render"
+  }
+};
+
 const PORT = process.env.PORT || 25565;
 app.listen(PORT, "0.0.0.0");
 
-// Optimization: perMessageDeflate: false disables compression overhead for low latency
 const wss = new WebSocket.Server({ 
   server: app,
   perMessageDeflate: false 
@@ -25,7 +36,6 @@ const wss = new WebSocket.Server({
 wss.on("connection", (ws, req) => {
   const path = req.url;
 
-  // Optimization: Disable Nagle's algorithm to send TCP packets instantly
   if (req.socket) {
     req.socket.setNoDelay(true);
   }
@@ -35,10 +45,8 @@ wss.on("connection", (ws, req) => {
     return;
   }
 
-  // Parse target URL to construct a proper Origin header for public servers
   const targetUrl = new URL(servers[path]);
 
-  // Connect to target WebSocket with low latency and clean headers
   const targetWs = new WebSocket(servers[path], {
     perMessageDeflate: false,
     headers: {
@@ -50,6 +58,41 @@ wss.on("connection", (ws, req) => {
   const messageQueue = [];
 
   ws.on("message", (data) => {
+    // Eaglercraft sends string packets (JSON) for MOTD ping requests
+    if (typeof data === "string" || Buffer.isBuffer(data)) {
+      const strData = data.toString();
+
+      // Check for Eaglercraft query/MOTD packet request
+      if (strData.includes("Accept: MOTD") || strData.includes("Accept: motd") || strData.startsWith("{")) {
+        try {
+          const parsed = JSON.parse(strData);
+          if (parsed.accept === "motd" || parsed.type === "motd") {
+            const motdInfo = MOTD_SETTINGS[path] || {
+              line1: "§e§lEaglerProxy",
+              line2: "§7Online"
+            };
+
+            const response = {
+              brand: "EaglerProxy",
+              cracked: true,
+              name: "EaglerProxy",
+              motd: [motdInfo.line1, motdInfo.line2],
+              type: "motd",
+              online: 1,
+              max: 100,
+              players: []
+            };
+
+            ws.send(JSON.stringify(response));
+            ws.close();
+            return;
+          }
+        } catch (e) {
+          // If it's normal binary game traffic, forward it normally
+        }
+      }
+    }
+
     if (targetWs.readyState === WebSocket.OPEN) {
       targetWs.send(data);
     } else if (targetWs.readyState === WebSocket.CONNECTING) {
@@ -73,7 +116,6 @@ wss.on("connection", (ws, req) => {
     }
   });
 
-  // Added error logging to easily catch proxy handshake drops in your console
   targetWs.on("error", (err) => {
     console.error(`Target WS Error for ${path}:`, err.message);
   });
