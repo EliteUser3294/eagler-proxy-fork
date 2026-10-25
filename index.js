@@ -1,5 +1,4 @@
 const WebSocket = require("ws");
-const fs = require("fs");
 const { createServer } = require("node:http");
 
 // Create HTTP server for platform health checks
@@ -8,28 +7,13 @@ const app = createServer((req, res) => {
   res.end("EaglerProxy is running!\n");
 });
 
-let servers = {};
-
-// Initial load of servers.json
-function loadServers() {
-  try {
-    if (fs.existsSync("servers.json")) {
-      servers = JSON.parse(fs.readFileSync("servers.json", "utf8"));
-    }
-  } catch (err) {}
-}
-
-loadServers();
-
-// Watch for changes in servers.json instead of polling
-if (fs.existsSync("servers.json")) {
-  fs.watch("servers.json", (eventType) => {
-    if (eventType === "change") loadServers();
-  });
-}
+// Define your servers directly here to avoid JSON parsing/trailing comma issues
+const servers = {
+  "/webmc": "wss://play.webmc.fun",
+  "/arch": "wss://arch.mc"
+};
 
 const PORT = process.env.PORT || 25565;
-
 app.listen(PORT, "0.0.0.0");
 
 // Optimization: perMessageDeflate: false disables compression overhead for low latency
@@ -51,12 +35,15 @@ wss.on("connection", (ws, req) => {
     return;
   }
 
-  // Connect to target WebSocket with low latency options
+  // Parse target URL to construct a proper Origin header for public servers
+  const targetUrl = new URL(servers[path]);
+
+  // Connect to target WebSocket with low latency and clean headers
   const targetWs = new WebSocket(servers[path], {
     perMessageDeflate: false,
     headers: {
-      "User-Agent": req.headers["user-agent"] || "",
-      "Origin": req.headers["origin"] || ""
+      "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+      "Origin": `${targetUrl.protocol}//${targetUrl.host}`
     }
   });
 
@@ -86,7 +73,10 @@ wss.on("connection", (ws, req) => {
     }
   });
 
-  targetWs.on("error", () => {});
+  // Added error logging to easily catch proxy handshake drops in your console
+  targetWs.on("error", (err) => {
+    console.error(`Target WS Error for ${path}:`, err.message);
+  });
 
   targetWs.on("close", () => {
     ws.close();
